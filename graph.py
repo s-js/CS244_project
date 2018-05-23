@@ -67,9 +67,9 @@ def to_vector_index(n, i, l, k):
 
 
 if __name__ == "__main__":
-    n = 40
+    n = 20
     t = NXTopology(number_of_servers=n*10,
-                   switch_graph_degree=5, number_of_racks=n)
+                   switch_graph_degree=3, number_of_racks=n)
     print(t.G.edges)
     print(t.sender_to_receiver)
 
@@ -79,9 +79,10 @@ if __name__ == "__main__":
         sender_switch = t.get_rack_index(i)
         receiver_switch = t.get_rack_index(t.sender_to_receiver[i])
         # print(sender_switch, receiver_switch)
-        D[sender_switch, receiver_switch] += 1
+        if sender_switch != receiver_switch:
+            D[sender_switch, receiver_switch] += 1
 
-    #np.set_printoptions(threshold=np.nan)
+    np.set_printoptions(threshold=np.nan)
     print(D)
     
     C = np.zeros(shape=(n ** 3 + 1))
@@ -107,7 +108,7 @@ if __name__ == "__main__":
     for (l, k) in t.G.edges:
         for i in range(n):
             A_up[idx, to_vector_index(n, i, l, k)] = 0.5
-            A_up[idx, to_vector_index(n, i, k, l)] = -0.5
+            A_up[idx, to_vector_index(n, i, k, l)] = 0.5
         idx += 1
     
     print("C = "+str(C))
@@ -117,7 +118,7 @@ if __name__ == "__main__":
     print("b_up = " + str(b_up))
 
     res = linprog(c=C, A_ub=A_up, b_ub=b_up, A_eq=A_eq,
-                  b_eq=b_eq, bounds=[(0, 1) for _ in range(len(C))], options={"disp": True})
+                  b_eq=b_eq, bounds=[(0, None) for _ in range(len(C)-1)]+[(0,1)], options={"disp": True})
 
     print(res)
     
