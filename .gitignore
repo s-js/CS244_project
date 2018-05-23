@@ -47,3 +47,10 @@ docs/_build/
 # IDEs
 .vscode/*
 .idea
+
+# Images
+*.svg
+*.jpg
+*.jpeg
+*.png
+*.bmp

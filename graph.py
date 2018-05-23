@@ -53,86 +53,125 @@ class NXTopology:
                 if array[0] != 0:
                     return array
 
-    def calculate_all_paths(self):
-        for sender in range(len(self.sender_to_receiver)):
-            receiver = self.sender_to_receiver[sender]
-            node1 = self.get_rack_index(sender)
-            node2 = self.get_rack_index(receiver)
-            # print(node1, node2)
-            shortest_paths = list(
-                islice(nx.shortest_simple_paths(self.G, node1, node2), 64))
+    def average_shortest_path_length(self):
+        s = 0
+        c = 0
+        for i in range(self.number_of_racks):
+            for j in range(i+1, self.number_of_racks):
+                s += len(nx.shortest_path(self.G, i, j))-1
+                c += 1
+        return float(s)/c
 
 
 def to_vector_index(n, i, l, k):
     return i * (n**2) + l * n + k
 
 
+def d_star(N, r):
+    temp = 1
+    p = 1
+    k = 2
+    while True:
+        if N - 1 - r * temp < 0:
+            k -= 1
+            print('k = '+str(k))
+            break
+        R = N - 1 - r * temp
+        p *= (r-1)
+        temp += p
+        k += 1
+
+    R = 0
+    for j in range(1, k):
+        R += r * (r - 1)**(j - 1)
+    R = N - 1 - R
+    print('R = '+str(R))
+
+    s = 0
+    for j in range(1, k):
+        s += j * r * (r - 1)**(j - 1)
+
+    return (s+k*R)/(N-1)
+
+
 if __name__ == "__main__":
-    n = 40
-    t = NXTopology(number_of_servers=n*10,
-                   switch_graph_degree=3, number_of_racks=n)
-    print(t.G.edges)
-    print(t.sender_to_receiver)
+    y_axis = []
+    x_axis = list(range(3, 33, 2))
+    for r in x_axis:
+        n = 40
+        f = n*10
+        t = NXTopology(number_of_servers=f,
+                       switch_graph_degree=r, number_of_racks=n)
+        # print(t.G.edges)
+        # print(t.sender_to_receiver)
 
-    D = np.zeros(shape=(n, n))
+        D = np.zeros(shape=(n, n))
 
-    for i in range(len(t.sender_to_receiver)):
-        sender_switch = t.get_rack_index(i)
-        receiver_switch = t.get_rack_index(t.sender_to_receiver[i])
-        # print(sender_switch, receiver_switch)
-        if sender_switch != receiver_switch:
-            D[sender_switch, receiver_switch] += 1
+        for i in range(len(t.sender_to_receiver)):
+            sender_switch = t.get_rack_index(i)
+            receiver_switch = t.get_rack_index(t.sender_to_receiver[i])
+            # print(sender_switch, receiver_switch)
+            if sender_switch != receiver_switch:
+                D[sender_switch, receiver_switch] += 1
 
-    #np.set_printoptions(threshold=np.nan)
-    print('D = '+str(D))
+        np.set_printoptions(threshold=np.nan)
+        #D = np.eye(n)[t.random_derangement(n)]
+        #print('D = '+str(D))
 
-    C = np.zeros(shape=(n ** 3 + 1))
-    C[-1] = -1
-    A_eq = cvx.spmatrix([], [], [], size=(n ** 2, n ** 3+1))
-    b_eq = np.zeros(shape=(n ** 2,))
+        C = np.zeros(shape=(n ** 3 + 1))
+        C[-1] = -1
+        A_eq = cvx.spmatrix([], [], [], size=(n ** 2, n ** 3+1))
+        b_eq = np.zeros(shape=(n ** 2,))
 
-    for i in range(n):
-        for l in range(n):
-            idx = i * n + l
-            for k in t.G.neighbors(l):
-                A_eq[idx, to_vector_index(n, i, l, k)] = 1
-                A_eq[idx, to_vector_index(n, i, k, l)] = -1
-            # coefficent of Z:
-            if l == i:
-                A_eq[idx, -1] = -np.sum(D[i, :])
-            else:
-                A_eq[idx, -1] = D[i, l]
-
-    A_up = cvx.spmatrix([], [], [], size=(len(t.G.edges)+n**3+2, n ** 3 + 1))
-    b_up = np.ones(shape=(len(t.G.edges)+n**3+2))  # link capacities
-    idx = 0
-    for (l, k) in t.G.edges:
         for i in range(n):
-            A_up[idx, to_vector_index(n, i, l, k)] = 0.5
-            A_up[idx, to_vector_index(n, i, k, l)] = 0.5
-        idx += 1
+            for l in range(n):
+                idx = i * n + l
+                for k in t.G.neighbors(l):
+                    A_eq[idx, to_vector_index(n, i, l, k)] = 1
+                    A_eq[idx, to_vector_index(n, i, k, l)] = -1
+                # coefficent of Z:
+                if l == i:
+                    A_eq[idx, -1] = -np.sum(D[i, :])
+                else:
+                    A_eq[idx, -1] = D[i, l]
 
-    C = cvx.matrix(C)
-    
-    for i in range(n ** 3 + 1):
-        A_up[idx+i, i] = -1
-    A_up[len(t.G.edges)+n**3+1, n ** 3] = 1
+        A_up = cvx.spmatrix([], [], [], size=(
+            len(t.G.edges)+n**3+2, n ** 3 + 1))
+        b_up = np.ones(shape=(len(t.G.edges)+n**3+2))  # link capacities
+        idx = 0
+        for (l, k) in t.G.edges:
+            for i in range(n):
+                A_up[idx, to_vector_index(n, i, l, k)] = 0.5
+                A_up[idx, to_vector_index(n, i, k, l)] = 0.5
+            idx += 1
 
-    b_up[idx:idx + n ** 3 + 1] = np.zeros(shape=(n**3+1))
-    b_up[-1] = 1
+        C = cvx.matrix(C)
 
-    #print("C = "+str(C))
-    #print("A_eq = "+str(A_eq))
-    #print("b_eq = "+str(b_eq))
-    #print("A_up = "+str(A_up))
-    #print("b_up = " + str(b_up))
+        for i in range(n ** 3 + 1):
+            A_up[idx+i, i] = -1
+        A_up[len(t.G.edges)+n**3+1, n ** 3] = 1
 
-    #A_up = cvx.matrix(A_up)
-    b_up = cvx.matrix(b_up)
-    #A_eq = cvx.matrix(A_eq)
-    b_eq = cvx.matrix(b_eq)
+        b_up[idx:idx + n ** 3 + 1] = np.zeros(shape=(n**3+1))
+        b_up[-1] = 1
 
-    sol = cvx.solvers.lp(C, A_up, b_up, A_eq, b_eq, solver='glpk')
-    print(sol['x'])
-    print('Z = '+str(sol['x'][-1]))
+        #print("C = "+str(C))
+        #print("A_eq = "+str(A_eq))
+        #print("b_eq = "+str(b_eq))
+        #print("A_up = "+str(A_up))
+        #print("b_up = " + str(b_up))
 
+        b_up = cvx.matrix(b_up)
+        b_eq = cvx.matrix(b_eq)
+
+        sol = cvx.solvers.lp(C, A_up, b_up, A_eq, b_eq, solver='glpk')
+        # print(sol['x'])
+        print('Z = ' + str(sol['x'][-1]))
+        upper_bound = n * r / (f * d_star(n, r))
+        print("Upper bound = " + str(upper_bound))
+        ratio = sol['x'][-1]/upper_bound
+        print('ratio = ' + str(ratio))
+        y_axis.append(ratio)
+    plt.figure()
+    plt.plot(x_axis, y_axis)
+    plt.savefig("1.svg")
+    plt.show()
