@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import networkx as nx
 from itertools import islice
 import numpy as np
+import cvxopt as cvx
 import random
 from scipy.optimize import linprog
 
@@ -67,9 +68,9 @@ def to_vector_index(n, i, l, k):
 
 
 if __name__ == "__main__":
-    n = 20
+    n = 3
     t = NXTopology(number_of_servers=n*10,
-                   switch_graph_degree=3, number_of_racks=n)
+                   switch_graph_degree=2, number_of_racks=n)
     print(t.G.edges)
     print(t.sender_to_receiver)
 
@@ -83,8 +84,8 @@ if __name__ == "__main__":
             D[sender_switch, receiver_switch] += 1
 
     np.set_printoptions(threshold=np.nan)
-    print(D)
-    
+    print('D = '+str(D))
+
     C = np.zeros(shape=(n ** 3 + 1))
     C[-1] = -1
     A_eq = np.zeros(shape=(n ** 2, n ** 3+1))
@@ -102,23 +103,33 @@ if __name__ == "__main__":
             else:
                 A_eq[idx, -1] = D[i, l]
 
-    A_up = np.zeros(shape=(len(t.G.edges), n ** 3 + 1))
-    b_up = np.ones(shape=(len(t.G.edges)))  # link capacities
+    A_up = np.zeros(shape=(len(t.G.edges)+n**3+2, n ** 3 + 1))
+    b_up = np.ones(shape=(len(t.G.edges)+n**3+2))  # link capacities
     idx = 0
     for (l, k) in t.G.edges:
         for i in range(n):
             A_up[idx, to_vector_index(n, i, l, k)] = 0.5
             A_up[idx, to_vector_index(n, i, k, l)] = 0.5
         idx += 1
-    
-    print("C = "+str(C))
-    print("A_eq = "+str(A_eq))
-    print("b_eq = "+str(b_eq))
+
+    C = cvx.matrix(C)
+
+    A_up[idx:idx + n ** 3 + 1, :] = - np.eye(n ** 3 + 1)
+    A_up[-1, -1] = 1
+    b_up[idx:idx + n ** 3 + 1] = np.zeros(shape=(n**3+1))
+    b_up[-1] = 1
+
+    #print("C = "+str(C))
+    #print("A_eq = "+str(A_eq))
+    #print("b_eq = "+str(b_eq))
     print("A_up = "+str(A_up))
     print("b_up = " + str(b_up))
 
-    res = linprog(c=C, A_ub=A_up, b_ub=b_up, A_eq=A_eq,
-                  b_eq=b_eq, bounds=[(0, None) for _ in range(len(C)-1)]+[(0,1)], options={"disp": True})
+    A_up = cvx.matrix(A_up)
+    b_up = cvx.matrix(b_up)
+    A_eq = cvx.matrix(A_eq)
+    b_eq = cvx.matrix(b_eq)
 
-    print(res)
-    
+    sol = cvx.solvers.lp(C, A_up, b_up, A_eq, b_eq, solver='glpk')
+    print(sol['x'])
+    print('Z = '+str(sol['x'][-1]))
