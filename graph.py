@@ -68,9 +68,9 @@ def to_vector_index(n, i, l, k):
 
 
 if __name__ == "__main__":
-    n = 3
+    n = 40
     t = NXTopology(number_of_servers=n*10,
-                   switch_graph_degree=2, number_of_racks=n)
+                   switch_graph_degree=3, number_of_racks=n)
     print(t.G.edges)
     print(t.sender_to_receiver)
 
@@ -83,13 +83,13 @@ if __name__ == "__main__":
         if sender_switch != receiver_switch:
             D[sender_switch, receiver_switch] += 1
 
-    np.set_printoptions(threshold=np.nan)
+    #np.set_printoptions(threshold=np.nan)
     print('D = '+str(D))
 
     C = np.zeros(shape=(n ** 3 + 1))
     C[-1] = -1
-    A_eq = np.zeros(shape=(n ** 2, n ** 3+1))
-    b_eq = np.zeros(shape=(n ** 2))
+    A_eq = cvx.spmatrix([], [], [], size=(n ** 2, n ** 3+1))
+    b_eq = np.zeros(shape=(n ** 2,))
 
     for i in range(n):
         for l in range(n):
@@ -103,7 +103,7 @@ if __name__ == "__main__":
             else:
                 A_eq[idx, -1] = D[i, l]
 
-    A_up = np.zeros(shape=(len(t.G.edges)+n**3+2, n ** 3 + 1))
+    A_up = cvx.spmatrix([], [], [], size=(len(t.G.edges)+n**3+2, n ** 3 + 1))
     b_up = np.ones(shape=(len(t.G.edges)+n**3+2))  # link capacities
     idx = 0
     for (l, k) in t.G.edges:
@@ -113,23 +113,26 @@ if __name__ == "__main__":
         idx += 1
 
     C = cvx.matrix(C)
+    
+    for i in range(n ** 3 + 1):
+        A_up[idx+i, i] = -1
+    A_up[len(t.G.edges)+n**3+1, n ** 3] = 1
 
-    A_up[idx:idx + n ** 3 + 1, :] = - np.eye(n ** 3 + 1)
-    A_up[-1, -1] = 1
     b_up[idx:idx + n ** 3 + 1] = np.zeros(shape=(n**3+1))
     b_up[-1] = 1
 
     #print("C = "+str(C))
     #print("A_eq = "+str(A_eq))
     #print("b_eq = "+str(b_eq))
-    print("A_up = "+str(A_up))
-    print("b_up = " + str(b_up))
+    #print("A_up = "+str(A_up))
+    #print("b_up = " + str(b_up))
 
-    A_up = cvx.matrix(A_up)
+    #A_up = cvx.matrix(A_up)
     b_up = cvx.matrix(b_up)
-    A_eq = cvx.matrix(A_eq)
+    #A_eq = cvx.matrix(A_eq)
     b_eq = cvx.matrix(b_eq)
 
     sol = cvx.solvers.lp(C, A_up, b_up, A_eq, b_eq, solver='glpk')
     print(sol['x'])
     print('Z = '+str(sol['x'][-1]))
+
