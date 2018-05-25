@@ -10,26 +10,23 @@ from scipy.optimize import linprog
 
 
 class NXTopology:
-
+    '''
+    NXTopology stores all information of our random topology
+    '''
     def __init__(self, number_of_servers=686, switch_graph_degree=14,  number_of_racks=40, number_of_links=None):
         self.number_of_servers = number_of_servers
         self.switch_graph_degree = switch_graph_degree  # k
         if number_of_links is not None:
-            self.number_of_racks = (
-                2 * number_of_links) // self.switch_graph_degree
+            self.number_of_racks = (2 * number_of_links) // self.switch_graph_degree
         else:
             self.number_of_racks = number_of_racks
 
-        self.number_of_servers_in_rack = int(
-            np.ceil(float(self.number_of_servers) / self.number_of_racks))
-        self.number_of_switch_ports = self.number_of_servers_in_rack + \
-            self.switch_graph_degree  # r
+        self.number_of_servers_in_rack = int(np.ceil(float(self.number_of_servers) / self.number_of_racks))
+        self.number_of_switch_ports = self.number_of_servers_in_rack + self.switch_graph_degree  # r
 
-        self.G = nx.random_regular_graph(
-            self.switch_graph_degree, self.number_of_racks)
+        self.G = nx.random_regular_graph(self.switch_graph_degree, self.number_of_racks)
         # sender_to_receiver[i] = j <=> i sends message to j
-        self.sender_to_receiver = self.random_derangement(
-            self.number_of_servers)
+        self.sender_to_receiver = self.random_derangement(self.number_of_servers)
 
         print("number_of_servers_in_rack = " +
               str(self.number_of_servers_in_rack))
@@ -37,15 +34,17 @@ class NXTopology:
         print("RRG has " + str(self.number_of_racks) + " nodes with degree " +
               str(self.switch_graph_degree) + " and " + str(self.G.number_of_edges()) + " edges")
 
+    # given server index, returns the ToR switch index it is connected to
     def get_rack_index(self, server_index):
         return server_index % self.number_of_racks
 
+    # To create the random traffic permutation
     def random_derangement(self, n):
         while True:
             array = list(range(n))
             for i in range(n - 1, -1, -1):
                 p = random.randint(0, i)
-                if array[p] == i:
+                if array[p] == i: # to prevent self-directed traffic
                     break
                 else:
                     array[i], array[p] = array[p], array[i]
@@ -53,6 +52,7 @@ class NXTopology:
                 if array[0] != 0:
                     return array
 
+    # To get ASPL of RRG
     def average_shortest_path_length(self):
         s = 0
         c = 0
@@ -66,7 +66,7 @@ class NXTopology:
 def to_vector_index(n, i, l, k):
     return i * (n**2) + l * n + k
 
-
+# To calculate theoretical upper bound for throughput in any network topology
 def d_star(N, r):
     temp = 1
     p = 1
@@ -135,8 +135,7 @@ if __name__ == "__main__":
                 else:
                     A_eq[idx, -1] = D[i, l]
 
-        A_up = cvx.spmatrix([], [], [], size=(
-            len(t.G.edges)+n**3+2, n ** 3 + 1))
+        A_up = cvx.spmatrix([], [], [], size=(len(t.G.edges)+n**3+2, n ** 3 + 1))
         b_up = np.ones(shape=(len(t.G.edges)+n**3+2))  # link capacities
         idx = 0
         for (l, k) in t.G.edges:
@@ -171,6 +170,7 @@ if __name__ == "__main__":
         ratio = sol['x'][-1]/upper_bound
         print('ratio = ' + str(ratio))
         y_axis.append(ratio)
+
     plt.figure()
     plt.plot(x_axis, y_axis)
     plt.savefig("1.svg")
