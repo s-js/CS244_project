@@ -9,65 +9,14 @@ import random
 from scipy.optimize import linprog
 
 
-class NXTopology:
-    '''
-    NXTopology stores all information of our random topology
-    '''
-    def __init__(self, number_of_servers=686, switch_graph_degree=14,  number_of_racks=40, number_of_links=None):
-        self.number_of_servers = number_of_servers
-        self.switch_graph_degree = switch_graph_degree  # k
-        if number_of_links is not None:
-            self.number_of_racks = (2 * number_of_links) // self.switch_graph_degree
-        else:
-            self.number_of_racks = number_of_racks
-
-        self.number_of_servers_in_rack = int(np.ceil(float(self.number_of_servers) / self.number_of_racks))
-        self.number_of_switch_ports = self.number_of_servers_in_rack + self.switch_graph_degree  # r
-
-        self.G = nx.random_regular_graph(self.switch_graph_degree, self.number_of_racks)
-        # sender_to_receiver[i] = j <=> i sends message to j
-        self.sender_to_receiver = self.random_derangement(self.number_of_servers)
-
-        print("number_of_servers_in_rack = " +
-              str(self.number_of_servers_in_rack))
-        print("number_of_switch_ports = " + str(self.number_of_switch_ports))
-        print("RRG has " + str(self.number_of_racks) + " nodes with degree " +
-              str(self.switch_graph_degree) + " and " + str(self.G.number_of_edges()) + " edges")
-
-    # given server index, returns the ToR switch index it is connected to
-    def get_rack_index(self, server_index):
-        return server_index % self.number_of_racks
-
-    # To create the random traffic permutation
-    def random_derangement(self, n):
-        while True:
-            array = list(range(n))
-            for i in range(n - 1, -1, -1):
-                p = random.randint(0, i)
-                if array[p] == i: # to prevent self-directed traffic
-                    break
-                else:
-                    array[i], array[p] = array[p], array[i]
-            else:
-                if array[0] != 0:
-                    return array
-
-    # To get ASPL of RRG
-    def average_shortest_path_length(self):
-        s = 0
-        c = 0
-        for i in range(self.number_of_racks):
-            for j in range(i+1, self.number_of_racks):
-                s += len(nx.shortest_path(self.G, i, j))-1
-                c += 1
-        return float(s)/c
-
-
 def to_vector_index(n, i, l, k):
     return i * (n**2) + l * n + k
 
-# To calculate theoretical upper bound for throughput in any network topology
+
 def d_star(N, r):
+    '''
+    To calculate theoretical upper bound for throughput in any network topology
+    '''
     temp = 1
     p = 1
     k = 2
@@ -93,23 +42,80 @@ def d_star(N, r):
 
     return (s+k*R)/(N-1)
 
+class NXTopology:
+    '''
+    NXTopology stores all information of our random topology
+    '''
+    def __init__(self, number_of_servers=686, switch_graph_degree=14,  number_of_racks=40, number_of_links=None):
+        self.number_of_servers = number_of_servers
+        self.switch_graph_degree = switch_graph_degree  # k
+        if number_of_links is not None:
+            self.number_of_racks = (2 * number_of_links) // self.switch_graph_degree
+        else:
+            self.number_of_racks = number_of_racks
 
-if __name__ == "__main__":
-    y_axis = []
-    x_axis = list(range(3, 33, 2))
-    for r in x_axis:
-        n = 40
-        f = n*10
-        t = NXTopology(number_of_servers=f,
-                       switch_graph_degree=r, number_of_racks=n)
-        # print(t.G.edges)
-        # print(t.sender_to_receiver)
+        self.number_of_servers_in_rack = int(np.ceil(float(self.number_of_servers) / self.number_of_racks))
+        self.number_of_switch_ports = self.number_of_servers_in_rack + self.switch_graph_degree  # r
 
+        self.G = nx.random_regular_graph(self.switch_graph_degree, self.number_of_racks)
+        # sender_to_receiver[i] = j <=> i sends message to j
+        self.sender_to_receiver = self.random_derangement(self.number_of_servers)
+
+        print("number_of_servers_in_rack = " +
+              str(self.number_of_servers_in_rack))
+        print("number_of_switch_ports = " + str(self.number_of_switch_ports))
+        print("RRG has " + str(self.number_of_racks) + " nodes with degree " +
+              str(self.switch_graph_degree) + " and " + str(self.G.number_of_edges()) + " edges")
+
+    
+    def get_rack_index(self, server_index):
+        '''
+        given server index, returns the ToR switch index it is connected to
+        '''
+        return server_index % self.number_of_racks
+
+    
+    def random_derangement(self, n):
+        '''
+        To create the random traffic permutation
+        '''
+        while True:
+            array = list(range(n))
+            for i in range(n - 1, -1, -1):
+                p = random.randint(0, i)
+                if array[p] == i: # to prevent self-directed traffic
+                    break
+                else:
+                    array[i], array[p] = array[p], array[i]
+            else:
+                if array[0] != 0:
+                    return array
+
+    
+    def average_shortest_path_length(self):
+        '''
+        To get ASPL of RRG
+        '''
+        s = 0
+        c = 0
+        for i in range(self.number_of_racks):
+            for j in range(i+1, self.number_of_racks):
+                s += len(nx.shortest_path(self.G, i, j))-1
+                c += 1
+        return float(s)/c
+
+    def get_max_min_throughput(self):
+        '''
+        Getting the max-min throughput using a linear program
+        '''
+        n = self.number_of_racks
+        f = self.number_of_servers
+        r = self.switch_graph_degree
         D = np.zeros(shape=(n, n))
 
-        for i in range(len(t.sender_to_receiver)):
-            sender_switch = t.get_rack_index(i)
-            receiver_switch = t.get_rack_index(t.sender_to_receiver[i])
+        for i in range(len(self.sender_to_receiver)):
+            sender_switch = self.get_rack_index(i)
+            receiver_switch = self.get_rack_index(self.sender_to_receiver[i])
             # print(sender_switch, receiver_switch)
             if sender_switch != receiver_switch:
                 D[sender_switch, receiver_switch] += 1
@@ -126,7 +132,7 @@ if __name__ == "__main__":
         for i in range(n):
             for l in range(n):
                 idx = i * n + l
-                for k in t.G.neighbors(l):
+                for k in self.G.neighbors(l):
                     A_eq[idx, to_vector_index(n, i, l, k)] = 1
                     A_eq[idx, to_vector_index(n, i, k, l)] = -1
                 # coefficent of Z:
@@ -135,10 +141,11 @@ if __name__ == "__main__":
                 else:
                     A_eq[idx, -1] = D[i, l]
 
-        A_up = cvx.spmatrix([], [], [], size=(len(t.G.edges)+n**3+2, n ** 3 + 1))
-        b_up = np.ones(shape=(len(t.G.edges)+n**3+2))  # link capacities
+        A_up = cvx.spmatrix([], [], [], size=(
+            len(self.G.edges)+n**3+2, n ** 3 + 1))
+        b_up = np.ones(shape=(len(self.G.edges)+n**3+2))  # link capacities
         idx = 0
-        for (l, k) in t.G.edges:
+        for (l, k) in self.G.edges:
             for i in range(n):
                 A_up[idx, to_vector_index(n, i, l, k)] = 0.5
                 A_up[idx, to_vector_index(n, i, k, l)] = 0.5
@@ -148,7 +155,7 @@ if __name__ == "__main__":
 
         for i in range(n ** 3 + 1):
             A_up[idx+i, i] = -1
-        A_up[len(t.G.edges)+n**3+1, n ** 3] = 1
+        A_up[len(self.G.edges)+n**3+1, n ** 3] = 1
 
         b_up[idx:idx + n ** 3 + 1] = np.zeros(shape=(n**3+1))
         b_up[-1] = 1
@@ -169,6 +176,22 @@ if __name__ == "__main__":
         print("Upper bound = " + str(upper_bound))
         ratio = sol['x'][-1]/upper_bound
         print('ratio = ' + str(ratio))
+        return ratio
+
+
+
+
+if __name__ == "__main__":
+    y_axis = []
+    x_axis = list(range(3, 33, 10))
+    for r in x_axis:
+        n = 40
+        f = n*10
+        t = NXTopology(number_of_servers=f,
+                       switch_graph_degree=r, number_of_racks=n)
+        # print(t.G.edges)
+        # print(t.sender_to_receiver)
+        ratio=t.get_max_min_throughput()
         y_axis.append(ratio)
 
     plt.figure()
