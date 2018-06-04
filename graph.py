@@ -42,6 +42,23 @@ def d_star(N, r):
 
     return (s+k*R)/(N-1)
 
+def random_derangement(n):
+    '''
+    To create the random traffic permutation
+    '''
+    while True:
+        array = list(range(n))
+        for i in range(n - 1, -1, -1):
+            p = random.randint(0, i)
+            if array[p] == i:  # to prevent self-directed traffic
+                break
+            else:
+                array[i], array[p] = array[p], array[i]
+        else:
+            if array[0] != 0:
+                return array
+
+
 class NXTopology:
     '''
     NXTopology stores all information of our random topology
@@ -59,7 +76,7 @@ class NXTopology:
 
         self.G = nx.random_regular_graph(self.switch_graph_degree, self.number_of_racks)
         # sender_to_receiver[i] = j <=> i sends message to j
-        self.sender_to_receiver = self.random_derangement(self.number_of_servers)
+        self.sender_to_receiver = random_derangement(self.number_of_servers)
 
         print("number_of_servers_in_rack = " +
               str(self.number_of_servers_in_rack))
@@ -73,23 +90,6 @@ class NXTopology:
         given server index, returns the ToR switch index it is connected to
         '''
         return server_index % self.number_of_racks
-
-    
-    def random_derangement(self, n):
-        '''
-        To create the random traffic permutation
-        '''
-        while True:
-            array = list(range(n))
-            for i in range(n - 1, -1, -1):
-                p = random.randint(0, i)
-                if array[p] == i: # to prevent self-directed traffic
-                    break
-                else:
-                    array[i], array[p] = array[p], array[i]
-            else:
-                if array[0] != 0:
-                    return array
 
     
     def average_shortest_path_length(self):
@@ -179,22 +179,156 @@ class NXTopology:
         return ratio
 
 
+class NXTopology_het:
+    '''
+    NXTopology_het stores all information of our random heteregenous topology
+    '''
 
+    def __init__(self, number_of_servers=400, number_of_switch_types=2, number_of_switches=[40,20],
+            number_of_ports_per_switch=[10,30],ratio_of_servers_in_largest_switch_to_expected=1.0, cross_cluster_bias=1.0):
+        
+        self.number_of_switch_types = number_of_switch_types
+        self.number_of_servers = number_of_servers
+        assert (number_of_switch_types == len(number_of_switches)
+                ), "number_of_switch_types != length of number_of_switches list"
+        assert (number_of_switch_types == len(number_of_switches)
+                ), "number_of_switch_types != length of number_of_ports_per_switch list"        
+        self.cross_cluster_bias = cross_cluster_bias # cross_cluster just for two clusters
+        
+        ## Getting number of servers per switch type, with a bias factor
+        number_of_switches = np.array(number_of_switches)
+        number_of_ports_per_switch = np.array(number_of_ports_per_switch)
+        server_dist=number_of_switches*number_of_ports_per_switch
+        server_dist = server_dist/np.sum(server_dist)
+        total_servers_per_switch_type = server_dist*number_of_servers
+        bias_in_servers = total_servers_per_switch_type[-1]*(ratio_of_servers_in_largest_switch_to_expected-1)
+        total_servers_per_switch_type_after_bias_inc=total_servers_per_switch_type[:-1] - bias_in_servers * \
+            (server_dist[:-1]/sum(server_dist[:-1]))
+        assert ((total_servers_per_switch_type[:-1] < bias_in_servers*(server_dist[:-1]/sum(server_dist[:-1]))).all()), "Bias in server distribution too large"
 
-if __name__ == "__main__":
-    y_axis = []
-    x_axis = list(range(3, 33, 10))
-    for r in x_axis:
-        n = 40
-        f = n*10
-        t = NXTopology(number_of_servers=f,
-                       switch_graph_degree=r, number_of_racks=n)
-        # print(t.G.edges)
-        # print(t.sender_to_receiver)
-        ratio=t.get_max_min_throughput()
-        y_axis.append(ratio)
+        total_servers_per_switch_type_after_bias = np.append(
+            total_servers_per_switch_type_after_bias_inc, total_servers_per_switch_type[-1]+bias_in_servers)
+    
+        server_per_switch_type = total_servers_per_switch_type_after_bias/number_of_switches
+        
+        # Rounding number of servers per switch type
+        for elem in range(len(server_per_switch_type)):
+            if elem==len(server_per_switch_type)-1:
+                server_per_switch_type[elem] = np.ceil(server_per_switch_type[elem])
+            else:
+                server_per_switch_type[elem] = np.floor(server_per_switch_type[elem])
+        server_per_switch_type.astype(int)
 
-    plt.figure()
-    plt.plot(x_axis, y_axis)
-    plt.savefig("1.svg")
-    plt.show()
+        
+        # !!! Only works for two types of switches for now !!! #
+        ## Dealing with biases in cross-cluster links
+        remaining_ports_per_switch = number_of_ports_per_switch-server_per_switch_type
+
+        # getting ratio of intra to total remaining ports per small switch, with link bias
+        total_remaining_ports_per_switch_type = remaining_ports_per_switch*number_of_switches
+        x=(total_remaining_ports_per_switch_type[0]**2)/2.0
+        y = cross_cluster_bias*total_remaining_ports_per_switch_type[0] * \
+            total_remaining_ports_per_switch_type[1]
+        ratio_of_intra=x/(x+y)
+
+        # getting actual number of intra and cross edges per small switch
+        intra_edges_per_small_switch = int(remaining_ports_per_switch[0]*ratio_of_intra)
+        #cross_edges_per_small_switch = remaining_ports_per_switch[0] - intra_edges_per_small_switch
+        initial_remaining_edges_per_small_switch = remaining_ports_per_switch[0]
+        remaining_ports_per_switch_full_list = [remaining_ports_per_switch[0]] * number_of_switches[0]\
+            + [remaining_ports_per_switch[1]]*number_of_switches[1]
+        
+        #Populating the graph with the links, with bias
+        G=nx.Graph()
+
+        for switch in range(number_of_switches[0]):
+            edges_list=[]
+
+            while ((initial_remaining_edges_per_small_switch-remaining_ports_per_switch_full_list[switch] <= intra_edges_per_small_switch) and switch!=number_of_switches[0]-1):
+                edge = [switch]
+                switch_rcv=random.uniform(switch,number_of_switches[0]-1)
+                while (initial_remaining_edges_per_small_switch-remaining_ports_per_switch_full_list[switch_rcv] > intra_edges_per_small_switch):
+                    switch_rcv = random.uniform(
+                        switch, number_of_switches[0]-1)
+                edge=edge+[switch_rcv]
+                edges_list.append(edge)
+                remaining_ports_per_switch_full_list[switch] -= 1
+                remaining_ports_per_switch_full_list[switch_rcv] -= 1
+
+            while (remaining_ports_per_switch_full_list[switch] > 0):
+                edge = [switch]
+                switch_rcv = random.uniform(
+                    number_of_switches[0], number_of_switches[0]+number_of_switches[1]-1)
+                while (remaining_ports_per_switch_full_list[switch_rcv]==0):
+                    switch_rcv = random.uniform(
+                        number_of_switches[0], number_of_switches[0]+number_of_switches[1]-1)
+                edge = edge+[switch_rcv]
+                edges_list.append(edge)
+                remaining_ports_per_switch_full_list[switch] -= 1
+                remaining_ports_per_switch_full_list[switch_rcv] -= 1
+
+            G.add_edges_from(edges_list)
+
+        for switch_big in range(number_of_switches[0], number_of_switches[0]+number_of_switches[1]):
+            edges_list = []
+            while (remaining_ports_per_switch_full_list[switch_big] > 0):
+                edge = [switch_big]
+                switch_rcv = random.uniform(
+                    switch_big, number_of_switches[0]+number_of_switches[1]-1)
+                while (remaining_ports_per_switch_full_list[switch_rcv] <= 0):
+                    switch_rcv = random.uniform(switch_big, number_of_switches[0]+number_of_switches[1]-1)
+                edge = edge+[switch_rcv]
+                edges_list.append(edge)
+                remaining_ports_per_switch_full_list[switch_big] -= 1
+                remaining_ports_per_switch_full_list[switch_rcv] -= 1
+
+            G.add_edges_from(edges_list)
+
+        
+    """     
+    self.switch_graph_degree = switch_graph_degree  # k
+        if number_of_links is not None:
+            self.number_of_racks = (
+                2 * number_of_links) // self.switch_graph_degree
+        else:
+            self.number_of_racks = number_of_racks
+
+        self.number_of_servers_in_rack = int(
+            np.ceil(float(self.number_of_servers) / self.number_of_racks))
+        self.number_of_switch_ports = self.number_of_servers_in_rack + \
+            self.switch_graph_degree  # r
+
+        self.G = nx.random_regular_graph(
+            self.switch_graph_degree, self.number_of_racks)
+        # sender_to_receiver[i] = j <=> i sends message to j
+        self.sender_to_receiver = random_derangement(self.number_of_servers)
+
+        print("number_of_servers_in_rack = " +
+              str(self.number_of_servers_in_rack))
+        print("number_of_switch_ports = " + str(self.number_of_switch_ports))
+        print("RRG has " + str(self.number_of_racks) + " nodes with degree " +
+              str(self.switch_graph_degree) + " and " + str(self.G.number_of_edges()) + " edges") 
+    """
+
+    def get_rack_index(self, server_index):
+        '''
+        given server index, returns the ToR switch index it is connected to
+        '''
+        # return server_index % self.number_of_racks
+
+    def average_shortest_path_length(self):
+        '''
+        To get ASPL of RRG
+        '''
+        # s = 0
+        # c = 0
+        # for i in range(self.number_of_racks):
+        #     for j in range(i+1, self.number_of_racks):
+        #         s += len(nx.shortest_path(self.G, i, j))-1
+        #         c += 1
+        # return float(s)/c
+
+    def get_max_min_throughput(self):
+        '''
+        Getting the max-min throughput using a linear program
+        '''
