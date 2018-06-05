@@ -198,13 +198,14 @@ class NXTopology:
         # ignore f_i,l,k and only minimize -Z (i.e. maximize Z):
         C = np.zeros(shape=(n**3 + 1))
         C[-1] = -1
+        C = cvx.matrix(C)
 
-        A_eq = cvx.spmatrix([], [], [], size=(n*(n+1)//2, n**3 + 1))
-        b_eq = np.zeros(shape=(n*(n+1)//2,))
+        A_eq = cvx.spmatrix([], [], [], size=(n**2+1, n**3 + 1))
+        b_eq = cvx.spmatrix([], [], [], size=(n**2+1, 1))
 
         idx = 0
         for i in range(n):
-            for l in range(i, n):
+            for l in range(n):
 
                 for k in self.G.neighbors(l):
                     A_eq[idx, to_vector_index(n, i, l, k)] = 1
@@ -217,29 +218,28 @@ class NXTopology:
                 #print(A_eq[idx, -1])
                 idx += 1
 
+        for l in range(n):
+            for k in range(n):
+                if(l, k) not in self.G.edges():
+                    for i in range(n):
+                        A_eq[idx, to_vector_index(n, i, l, k)] = 1
+                        A_eq[idx, to_vector_index(n, i, k, l)] = 1
+
         A_up = cvx.spmatrix([], [], [], size=(
-            n*(n+1) + n**3 + 1, n**3 + 1))
-        b_up = np.zeros(shape=(n*(n+1) + n**3 + 1))
+            len(self.G.edges())*2 + n**3 + 1, n**3 + 1))
+        b_up = cvx.spmatrix([], [], [], size=(len(self.G.edges())*2 + n**3 + 1, 1))
         idx = 0
 
         for l in range(n):
-            for k in range(l, n):
+            for k in range(n):
+                if(l, k) not in self.G.edges():
+                    continue
                 for i in range(n):
-                    A_up[idx, to_vector_index(n, i, l, k)] = 0.5
-                    A_up[idx, to_vector_index(n, i, k, l)] = 0.5
-                if (l, k) in self.G.edges():
+                    A_up[idx, to_vector_index(n, i, l, k)] = 1
+                    # A_up[idx, to_vector_index(n, i, k, l)] = 0.5
                     b_up[idx] = 1  # C(e)
 
                 idx += 1
-                '''
-                for i in range(n):
-                    A_up[idx, to_vector_index(n, i, k, l)] = 1
-                if (l, k) in self.G.edges():
-                    b_up[idx] = 1  # C(e)
-                idx += 1
-                '''
-
-        C = cvx.matrix(C)
 
         for i in range(n**3 + 1):
             A_up[idx, i] = -1
@@ -259,8 +259,8 @@ class NXTopology:
         b_eq = cvx.matrix(b_eq)
 
         sol = cvx.solvers.lp(C, A_up, b_up, A_eq, b_eq, solver='glpk')
-
-        # calculate flow of each edge
+        '''
+        # calculate and print flow of each edge
         for (l, k) in self.G.edges():
             for i in range(n):
                 if np.abs(sol['x'][to_vector_index(n, i, l, k)]) > 1e-8:
@@ -269,7 +269,7 @@ class NXTopology:
                 if np.abs(sol['x'][to_vector_index(n, i, k, l)]) > 1e-8:
                     print('flow {} from {} to {} is {}'.format(
                         i, k, l, sol['x'][to_vector_index(n, i, k, l)]))
-
+        '''
         return sol['x'][-1]
 
 
