@@ -60,6 +60,13 @@ def d_star(N, r):
     return (s+k*R)/(N-1)
 
 
+def check_if_edge_possible(G, node, total_nodes, remaining_ports_per_switch_full_list):
+    for idx in range(node+1, total_nodes):
+        if ([node, idx] not in np.array(G.edges).tolist()) and (remaining_ports_per_switch_full_list[idx] > 0):
+            return True
+    return False
+
+
 def random_derangement(n):
     '''
     To create the random traffic permutation
@@ -227,7 +234,8 @@ class NXTopology:
 
         A_up = cvx.spmatrix([], [], [], size=(
             len(self.G.edges())*2 + n**3 + 1, n**3 + 1))
-        b_up = cvx.spmatrix([], [], [], size=(len(self.G.edges())*2 + n**3 + 1, 1))
+        b_up = cvx.spmatrix([], [], [], size=(
+            len(self.G.edges())*2 + n**3 + 1, 1))
         idx = 0
 
         for l in range(n):
@@ -300,7 +308,7 @@ class NXTopology_het:
             ratio_of_servers_in_largest_switch_to_expected-1)
         total_servers_per_switch_type_after_bias_inc = total_servers_per_switch_type[:-1] - bias_in_servers * \
             (server_dist[:-1]/sum(server_dist[:-1]))
-        assert ((total_servers_per_switch_type[:-1] < bias_in_servers*(server_dist[:-1]/sum(
+        assert ((total_servers_per_switch_type[:-1] >= bias_in_servers*(server_dist[:-1]/sum(
             server_dist[:-1]))).all()), "Bias in server distribution too large"
 
         total_servers_per_switch_type_after_bias = np.append(
@@ -333,56 +341,62 @@ class NXTopology_het:
         intra_edges_per_small_switch = int(
             remaining_ports_per_switch[0]*ratio_of_intra)
         #cross_edges_per_small_switch = remaining_ports_per_switch[0] - intra_edges_per_small_switch
-        initial_remaining_edges_per_small_switch = remaining_ports_per_switch[0]
-        remaining_ports_per_switch_full_list = [remaining_ports_per_switch[0]] * number_of_switches[0]\
-            + [remaining_ports_per_switch[1]]*number_of_switches[1]
+        initial_remaining_edges_per_small_switch = int(
+            remaining_ports_per_switch[0])
+        remaining_ports_per_switch_full_list = [int(remaining_ports_per_switch[0])] * number_of_switches[0]\
+            + [int(remaining_ports_per_switch[1])]*number_of_switches[1]
 
         # Populating the graph with the links, with bias
-        G = nx.Graph()
+        self.G = nx.Graph()
 
+        # start with small switches
         for switch in range(number_of_switches[0]):
             edges_list = []
 
-            while ((initial_remaining_edges_per_small_switch-remaining_ports_per_switch_full_list[switch] <= intra_edges_per_small_switch) and switch != number_of_switches[0]-1):
+            # for each switch, start with intra-cluster links
+            while ((initial_remaining_edges_per_small_switch-remaining_ports_per_switch_full_list[switch] < intra_edges_per_small_switch) and switch != number_of_switches[0]-1):
                 edge = [switch]
-                switch_rcv = random.uniform(switch, number_of_switches[0]-1)
-                while (initial_remaining_edges_per_small_switch-remaining_ports_per_switch_full_list[switch_rcv] > intra_edges_per_small_switch):
-                    switch_rcv = random.uniform(
-                        switch, number_of_switches[0]-1)
+                switch_rcv = random.randint(switch+1, number_of_switches[0]-1)
+                while (edge+[switch_rcv] in edges_list) or (initial_remaining_edges_per_small_switch-remaining_ports_per_switch_full_list[switch_rcv] >= intra_edges_per_small_switch):
+                    switch_rcv = random.randint(
+                        switch+1, number_of_switches[0]-1)
                 edge = edge+[switch_rcv]
                 edges_list.append(edge)
                 remaining_ports_per_switch_full_list[switch] -= 1
                 remaining_ports_per_switch_full_list[switch_rcv] -= 1
 
+            # then, for each switch, add the cross-cluster links
             while (remaining_ports_per_switch_full_list[switch] > 0):
                 edge = [switch]
-                switch_rcv = random.uniform(
+                switch_rcv = random.randint(
                     number_of_switches[0], number_of_switches[0]+number_of_switches[1]-1)
-                while (remaining_ports_per_switch_full_list[switch_rcv] == 0):
-                    switch_rcv = random.uniform(
+                while (edge+[switch_rcv] in edges_list) or (remaining_ports_per_switch_full_list[switch_rcv] == 0):
+                    switch_rcv = random.randint(
                         number_of_switches[0], number_of_switches[0]+number_of_switches[1]-1)
                 edge = edge+[switch_rcv]
                 edges_list.append(edge)
                 remaining_ports_per_switch_full_list[switch] -= 1
                 remaining_ports_per_switch_full_list[switch_rcv] -= 1
 
-            G.add_edges_from(edges_list)
+            self.G.add_edges_from(edges_list)
 
+        # now, add links for just the intra-(small switch cluster) links
         for switch_big in range(number_of_switches[0], number_of_switches[0]+number_of_switches[1]):
-            edges_list = []
-            while (remaining_ports_per_switch_full_list[switch_big] > 0):
+            # some ports in the last switches might stay unconnected because of boundary conditions
+            while ((remaining_ports_per_switch_full_list[switch_big] > 0) and
+                    (switch_big != number_of_switches[0]+number_of_switches[1]-1) and
+                    (np.sum(remaining_ports_per_switch_full_list)-remaining_ports_per_switch_full_list[switch_big] > 0) and
+                    check_if_edge_possible(self.G, switch_big, number_of_switches[0]+number_of_switches[1], remaining_ports_per_switch_full_list)):
                 edge = [switch_big]
-                switch_rcv = random.uniform(
-                    switch_big, number_of_switches[0]+number_of_switches[1]-1)
-                while (remaining_ports_per_switch_full_list[switch_rcv] <= 0):
-                    switch_rcv = random.uniform(
-                        switch_big, number_of_switches[0]+number_of_switches[1]-1)
+                switch_rcv = random.randint(
+                    switch_big+1, number_of_switches[0]+number_of_switches[1]-1)
+                while (edge+[switch_rcv] in edges_list) or (remaining_ports_per_switch_full_list[switch_rcv] == 0):
+                    switch_rcv = random.randint(
+                        switch_big+1, number_of_switches[0]+number_of_switches[1]-1)
                 edge = edge+[switch_rcv]
-                edges_list.append(edge)
+                self.G.add_edge(switch_big, switch_rcv)
                 remaining_ports_per_switch_full_list[switch_big] -= 1
                 remaining_ports_per_switch_full_list[switch_rcv] -= 1
-
-            G.add_edges_from(edges_list)
 
     """     
     self.switch_graph_degree = switch_graph_degree  # k
