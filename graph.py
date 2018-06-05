@@ -7,15 +7,32 @@ import numpy as np
 import cvxopt as cvx
 import random
 from scipy.optimize import linprog
+from enum import Enum
+
+
+class TrafficType(Enum):
+    ALL_TO_ALL = 0
+    PERMUTATION = 1
 
 
 def to_vector_index(n, i, l, k):
     return i * (n**2) + l * n + k
 
 
+def theoretical_upper_bound(number_of_switches, degree, number_of_servers, traffic_type):
+
+    # f is the number of flows
+    if traffic_type == TrafficType.ALL_TO_ALL:
+        f = number_of_servers * (number_of_servers - 1)
+    elif traffic_type == TrafficType.PERMUTATION:
+        f = number_of_servers
+
+    return number_of_switches * degree / (f * d_star(number_of_switches, degree))
+
+
 def d_star(N, r):
     '''
-    To calculate theoretical upper bound for throughput in any network topology
+    To calculate theoretical upper bound for throughput in any regular graph network topology
     '''
     temp = 1
     p = 1
@@ -42,6 +59,7 @@ def d_star(N, r):
 
     return (s+k*R)/(N-1)
 
+
 def random_derangement(n):
     '''
     To create the random traffic permutation
@@ -63,20 +81,23 @@ class NXTopology:
     '''
     NXTopology stores all information of our random topology
     '''
+
     def __init__(self, number_of_servers=686, switch_graph_degree=14,  number_of_racks=40, number_of_links=None):
         self.number_of_servers = number_of_servers
         self.switch_graph_degree = switch_graph_degree  # k
         if number_of_links is not None:
-            self.number_of_racks = (2 * number_of_links) // self.switch_graph_degree
+            self.number_of_racks = (
+                2 * number_of_links) // self.switch_graph_degree
         else:
             self.number_of_racks = number_of_racks
 
-        self.number_of_servers_in_rack = int(np.ceil(float(self.number_of_servers) / self.number_of_racks))
-        self.number_of_switch_ports = self.number_of_servers_in_rack + self.switch_graph_degree  # r
+        self.number_of_servers_in_rack = int(
+            np.ceil(float(self.number_of_servers) / self.number_of_racks))
+        self.number_of_switch_ports = self.number_of_servers_in_rack + \
+            self.switch_graph_degree  # r
 
-        self.G = nx.random_regular_graph(self.switch_graph_degree, self.number_of_racks)
-        # sender_to_receiver[i] = j <=> i sends message to j
-        self.sender_to_receiver = random_derangement(self.number_of_servers)
+        self.G = nx.random_regular_graph(
+            self.switch_graph_degree, self.number_of_racks)
 
         print("number_of_servers_in_rack = " +
               str(self.number_of_servers_in_rack))
@@ -84,14 +105,42 @@ class NXTopology:
         print("RRG has " + str(self.number_of_racks) + " nodes with degree " +
               str(self.switch_graph_degree) + " and " + str(self.G.number_of_edges()) + " edges")
 
-    
+    def RandomPermutation(self, size):
+        screw = 1
+        ls = []
+
+        while screw == 1:
+            screw = 0
+            ls = []
+            for i in range(size):
+                ls.append(i)
+            for i in range(size):
+                ok = 0
+                k = 0
+                cnt = 0
+                while ok == 0:
+                    # choose a shift in [0, size-1-i]
+                    k = random.randint(0, size-i-1)
+                    # check if we should swap i and i+k
+                    if self.get_rack_index(i) != self.get_rack_index(ls[i+k]):
+                        ok = 1
+                    cnt += 1
+                    if cnt > 50:
+                        screw = 1
+                        ok = 1
+
+                # swap i's value and i+k's value
+                buf = ls[i]
+                ls[i] = ls[i+k]
+                ls[i+k] = buf
+        return ls
+
     def get_rack_index(self, server_index):
         '''
         given server index, returns the ToR switch index it is connected to
         '''
         return server_index % self.number_of_racks
 
-    
     def average_shortest_path_length(self):
         '''
         To get ASPL of RRG
@@ -104,34 +153,59 @@ class NXTopology:
                 c += 1
         return float(s)/c
 
-    def get_max_min_throughput(self):
+    def get_max_min_throughput(self, traffic_type):
         '''
         Getting the max-min throughput using a linear program
         '''
         n = self.number_of_racks
-        f = self.number_of_servers
         r = self.switch_graph_degree
+
+        # sender_to_receiver[i, j] = 1 <=> i sends message to j
+        if traffic_type == TrafficType.PERMUTATION:
+            self.sender_to_receiver = self.RandomPermutation(
+                self.number_of_servers)
+            self.sender_to_receiver = np.eye(self.number_of_servers)[
+                self.sender_to_receiver]
+        elif traffic_type == TrafficType.ALL_TO_ALL:
+            self.sender_to_receiver = np.ones(shape=(
+                self.number_of_servers, self.number_of_servers))-np.eye(self.number_of_servers)
+
         D = np.zeros(shape=(n, n))
+        for i in range(self.sender_to_receiver.shape[0]):
+            for j in range(self.sender_to_receiver.shape[1]):
+                if self.sender_to_receiver[i][j] == 0:
+                    continue
+                sender_switch = self.get_rack_index(i)
+                receiver_switch = self.get_rack_index(j)
+                #receiver_switch = self.get_rack_index(self.sender_to_receiver[i])
+                # print(sender_switch, receiver_switch)
+                if sender_switch != receiver_switch:
+                    #print(sender_switch, receiver_switch)
+                    D[sender_switch, receiver_switch] += 1
+                else:
+                    print('switches from the same rack are sending data')
 
-        for i in range(len(self.sender_to_receiver)):
-            sender_switch = self.get_rack_index(i)
-            receiver_switch = self.get_rack_index(self.sender_to_receiver[i])
-            # print(sender_switch, receiver_switch)
-            if sender_switch != receiver_switch:
-                D[sender_switch, receiver_switch] += 1
+        # np.set_printoptions(threshold=np.nan)
+        # D = np.eye(n)[random_derangement(n)]*self.number_of_servers_in_rack
+        # print(self.sender_to_receiver)
+        # print('D = '+str(D))
 
-        np.set_printoptions(threshold=np.nan)
-        #D = np.eye(n)[t.random_derangement(n)]
-        #print('D = '+str(D))
+        # We now convert the linear programming problem to the following form:
+        # Minimize:     c^T * x
+        # Subject to:   A_up * x <= b_up
+        #               A_eq * x == b_eq
 
-        C = np.zeros(shape=(n ** 3 + 1))
+        # ignore f_i,l,k and only minimize -Z (i.e. maximize Z):
+        C = np.zeros(shape=(n**3 + 1))
         C[-1] = -1
-        A_eq = cvx.spmatrix([], [], [], size=(n ** 2, n ** 3+1))
-        b_eq = np.zeros(shape=(n ** 2,))
 
+        A_eq = cvx.spmatrix([], [], [], size=(n*(n+1)//2, n**3 + 1))
+        b_eq = np.zeros(shape=(n*(n+1)//2,))
+
+        idx = 0
         for i in range(n):
-            for l in range(n):
-                idx = i * n + l
+            for l in range(i, n):
+
                 for k in self.G.neighbors(l):
                     A_eq[idx, to_vector_index(n, i, l, k)] = 1
                     A_eq[idx, to_vector_index(n, i, k, l)] = -1
@@ -140,25 +214,40 @@ class NXTopology:
                     A_eq[idx, -1] = -np.sum(D[i, :])
                 else:
                     A_eq[idx, -1] = D[i, l]
+                #print(A_eq[idx, -1])
+                idx += 1
 
         A_up = cvx.spmatrix([], [], [], size=(
-            len(self.G.edges)+n**3+2, n ** 3 + 1))
-        b_up = np.ones(shape=(len(self.G.edges)+n**3+2))  # link capacities
+            n*(n+1) + n**3 + 1, n**3 + 1))
+        b_up = np.zeros(shape=(n*(n+1) + n**3 + 1))
         idx = 0
-        for (l, k) in self.G.edges:
-            for i in range(n):
-                A_up[idx, to_vector_index(n, i, l, k)] = 0.5
-                A_up[idx, to_vector_index(n, i, k, l)] = 0.5
-            idx += 1
+
+        for l in range(n):
+            for k in range(l, n):
+                for i in range(n):
+                    A_up[idx, to_vector_index(n, i, l, k)] = 0.5
+                    A_up[idx, to_vector_index(n, i, k, l)] = 0.5
+                if (l, k) in self.G.edges():
+                    b_up[idx] = 1  # C(e)
+
+                idx += 1
+                '''
+                for i in range(n):
+                    A_up[idx, to_vector_index(n, i, k, l)] = 1
+                if (l, k) in self.G.edges():
+                    b_up[idx] = 1  # C(e)
+                idx += 1
+                '''
 
         C = cvx.matrix(C)
 
-        for i in range(n ** 3 + 1):
-            A_up[idx+i, i] = -1
-        A_up[len(self.G.edges)+n**3+1, n ** 3] = 1
+        for i in range(n**3 + 1):
+            A_up[idx, i] = -1
+            idx += 1
+        #A_up[len(self.G.edges) + n**3 + 1, n**3] = 1
 
-        b_up[idx:idx + n ** 3 + 1] = np.zeros(shape=(n**3+1))
-        b_up[-1] = 1
+        #b_up[idx:idx + n**3 + 1] = np.zeros(shape=(n**3 + 1))
+        #b_up[-1] = 2
 
         #print("C = "+str(C))
         #print("A_eq = "+str(A_eq))
@@ -170,13 +259,18 @@ class NXTopology:
         b_eq = cvx.matrix(b_eq)
 
         sol = cvx.solvers.lp(C, A_up, b_up, A_eq, b_eq, solver='glpk')
-        # print(sol['x'])
-        print('Z = ' + str(sol['x'][-1]))
-        upper_bound = n * r / (f * d_star(n, r))
-        print("Upper bound = " + str(upper_bound))
-        ratio = sol['x'][-1]/upper_bound
-        print('ratio = ' + str(ratio))
-        return ratio
+
+        # calculate flow of each edge
+        for (l, k) in self.G.edges():
+            for i in range(n):
+                if np.abs(sol['x'][to_vector_index(n, i, l, k)]) > 1e-8:
+                    print('flow {} from {} to {} is {}'.format(
+                        i, l, k, sol['x'][to_vector_index(n, i, l, k)]))
+                if np.abs(sol['x'][to_vector_index(n, i, k, l)]) > 1e-8:
+                    print('flow {} from {} to {} is {}'.format(
+                        i, k, l, sol['x'][to_vector_index(n, i, k, l)]))
+
+        return sol['x'][-1]
 
 
 class NXTopology_het:
@@ -184,73 +278,78 @@ class NXTopology_het:
     NXTopology_het stores all information of our random heteregenous topology
     '''
 
-    def __init__(self, number_of_servers=400, number_of_switch_types=2, number_of_switches=[40,20],
-            number_of_ports_per_switch=[10,30],ratio_of_servers_in_largest_switch_to_expected=1.0, cross_cluster_bias=1.0):
-        
+    def __init__(self, number_of_servers=400, number_of_switch_types=2, number_of_switches=[40, 20],
+                 number_of_ports_per_switch=[10, 30], ratio_of_servers_in_largest_switch_to_expected=1.0, cross_cluster_bias=1.0):
+
         self.number_of_switch_types = number_of_switch_types
         self.number_of_servers = number_of_servers
         assert (number_of_switch_types == len(number_of_switches)
                 ), "number_of_switch_types != length of number_of_switches list"
         assert (number_of_switch_types == len(number_of_switches)
-                ), "number_of_switch_types != length of number_of_ports_per_switch list"        
-        self.cross_cluster_bias = cross_cluster_bias # cross_cluster just for two clusters
-        
-        ## Getting number of servers per switch type, with a bias factor
+                ), "number_of_switch_types != length of number_of_ports_per_switch list"
+        # cross_cluster just for two clusters
+        self.cross_cluster_bias = cross_cluster_bias
+
+        # Getting number of servers per switch type, with a bias factor
         number_of_switches = np.array(number_of_switches)
         number_of_ports_per_switch = np.array(number_of_ports_per_switch)
-        server_dist=number_of_switches*number_of_ports_per_switch
+        server_dist = number_of_switches*number_of_ports_per_switch
         server_dist = server_dist/np.sum(server_dist)
         total_servers_per_switch_type = server_dist*number_of_servers
-        bias_in_servers = total_servers_per_switch_type[-1]*(ratio_of_servers_in_largest_switch_to_expected-1)
-        total_servers_per_switch_type_after_bias_inc=total_servers_per_switch_type[:-1] - bias_in_servers * \
+        bias_in_servers = total_servers_per_switch_type[-1]*(
+            ratio_of_servers_in_largest_switch_to_expected-1)
+        total_servers_per_switch_type_after_bias_inc = total_servers_per_switch_type[:-1] - bias_in_servers * \
             (server_dist[:-1]/sum(server_dist[:-1]))
-        assert ((total_servers_per_switch_type[:-1] < bias_in_servers*(server_dist[:-1]/sum(server_dist[:-1]))).all()), "Bias in server distribution too large"
+        assert ((total_servers_per_switch_type[:-1] < bias_in_servers*(server_dist[:-1]/sum(
+            server_dist[:-1]))).all()), "Bias in server distribution too large"
 
         total_servers_per_switch_type_after_bias = np.append(
             total_servers_per_switch_type_after_bias_inc, total_servers_per_switch_type[-1]+bias_in_servers)
-    
+
         server_per_switch_type = total_servers_per_switch_type_after_bias/number_of_switches
-        
+
         # Rounding number of servers per switch type
         for elem in range(len(server_per_switch_type)):
-            if elem==len(server_per_switch_type)-1:
-                server_per_switch_type[elem] = np.ceil(server_per_switch_type[elem])
+            if elem == len(server_per_switch_type)-1:
+                server_per_switch_type[elem] = np.ceil(
+                    server_per_switch_type[elem])
             else:
-                server_per_switch_type[elem] = np.floor(server_per_switch_type[elem])
+                server_per_switch_type[elem] = np.floor(
+                    server_per_switch_type[elem])
         server_per_switch_type.astype(int)
 
-        
         # !!! Only works for two types of switches for now !!! #
-        ## Dealing with biases in cross-cluster links
+        # Dealing with biases in cross-cluster links
         remaining_ports_per_switch = number_of_ports_per_switch-server_per_switch_type
 
         # getting ratio of intra to total remaining ports per small switch, with link bias
         total_remaining_ports_per_switch_type = remaining_ports_per_switch*number_of_switches
-        x=(total_remaining_ports_per_switch_type[0]**2)/2.0
+        x = (total_remaining_ports_per_switch_type[0]**2)/2.0
         y = cross_cluster_bias*total_remaining_ports_per_switch_type[0] * \
             total_remaining_ports_per_switch_type[1]
-        ratio_of_intra=x/(x+y)
+        ratio_of_intra = x/(x+y)
 
         # getting actual number of intra and cross edges per small switch
-        intra_edges_per_small_switch = int(remaining_ports_per_switch[0]*ratio_of_intra)
+        intra_edges_per_small_switch = int(
+            remaining_ports_per_switch[0]*ratio_of_intra)
         #cross_edges_per_small_switch = remaining_ports_per_switch[0] - intra_edges_per_small_switch
         initial_remaining_edges_per_small_switch = remaining_ports_per_switch[0]
         remaining_ports_per_switch_full_list = [remaining_ports_per_switch[0]] * number_of_switches[0]\
             + [remaining_ports_per_switch[1]]*number_of_switches[1]
-        
-        #Populating the graph with the links, with bias
-        G=nx.Graph()
+
+        # Populating the graph with the links, with bias
+        G = nx.Graph()
 
         for switch in range(number_of_switches[0]):
-            edges_list=[]
+            edges_list = []
 
-            while ((initial_remaining_edges_per_small_switch-remaining_ports_per_switch_full_list[switch] <= intra_edges_per_small_switch) and switch!=number_of_switches[0]-1):
+            while ((initial_remaining_edges_per_small_switch-remaining_ports_per_switch_full_list[switch] <= intra_edges_per_small_switch) and switch != number_of_switches[0]-1):
                 edge = [switch]
-                switch_rcv=random.uniform(switch,number_of_switches[0]-1)
+                switch_rcv = random.uniform(switch, number_of_switches[0]-1)
                 while (initial_remaining_edges_per_small_switch-remaining_ports_per_switch_full_list[switch_rcv] > intra_edges_per_small_switch):
                     switch_rcv = random.uniform(
                         switch, number_of_switches[0]-1)
-                edge=edge+[switch_rcv]
+                edge = edge+[switch_rcv]
                 edges_list.append(edge)
                 remaining_ports_per_switch_full_list[switch] -= 1
                 remaining_ports_per_switch_full_list[switch_rcv] -= 1
@@ -259,7 +358,7 @@ class NXTopology_het:
                 edge = [switch]
                 switch_rcv = random.uniform(
                     number_of_switches[0], number_of_switches[0]+number_of_switches[1]-1)
-                while (remaining_ports_per_switch_full_list[switch_rcv]==0):
+                while (remaining_ports_per_switch_full_list[switch_rcv] == 0):
                     switch_rcv = random.uniform(
                         number_of_switches[0], number_of_switches[0]+number_of_switches[1]-1)
                 edge = edge+[switch_rcv]
@@ -276,7 +375,8 @@ class NXTopology_het:
                 switch_rcv = random.uniform(
                     switch_big, number_of_switches[0]+number_of_switches[1]-1)
                 while (remaining_ports_per_switch_full_list[switch_rcv] <= 0):
-                    switch_rcv = random.uniform(switch_big, number_of_switches[0]+number_of_switches[1]-1)
+                    switch_rcv = random.uniform(
+                        switch_big, number_of_switches[0]+number_of_switches[1]-1)
                 edge = edge+[switch_rcv]
                 edges_list.append(edge)
                 remaining_ports_per_switch_full_list[switch_big] -= 1
@@ -284,7 +384,6 @@ class NXTopology_het:
 
             G.add_edges_from(edges_list)
 
-        
     """     
     self.switch_graph_degree = switch_graph_degree  # k
         if number_of_links is not None:
