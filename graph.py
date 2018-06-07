@@ -4,18 +4,35 @@ import matplotlib.pyplot as plt
 import networkx as nx
 from itertools import islice
 import numpy as np
-#import cvxopt as cvx
+import cvxopt as cvx
 import random
 from scipy.optimize import linprog
+from enum import Enum
+
+
+class TrafficType(Enum):
+    ALL_TO_ALL = 0
+    PERMUTATION = 1
 
 
 def to_vector_index(n, i, l, k):
     return i * (n**2) + l * n + k
 
 
+def theoretical_upper_bound(number_of_switches, degree, number_of_servers, traffic_type):
+
+    # f is the number of flows
+    if traffic_type == TrafficType.ALL_TO_ALL:
+        f = number_of_servers * (number_of_servers - 1)
+    elif traffic_type == TrafficType.PERMUTATION:
+        f = number_of_servers
+
+    return number_of_switches * degree / (f * d_star(number_of_switches, degree))
+
+
 def d_star(N, r):
     '''
-    To calculate theoretical upper bound for throughput in any network topology
+    To calculate theoretical upper bound for throughput in any regular graph network topology
     '''
     temp = 1
     p = 1
@@ -42,6 +59,14 @@ def d_star(N, r):
 
     return (s+k*R)/(N-1)
 
+
+def check_if_edge_possible(G, node, total_nodes, remaining_ports_per_switch_full_list):
+    for idx in range(node+1, total_nodes):
+        if ([node, idx] not in np.array(G.edges).tolist()) and (remaining_ports_per_switch_full_list[idx] > 0):
+            return True
+    return False
+
+
 def random_derangement(n):
     '''
     To create the random traffic permutation
@@ -59,130 +84,201 @@ def random_derangement(n):
                 return array
 
 
-def check_if_edge_possible(G, node, total_nodes, remaining_ports_per_switch_full_list):
-    for idx in range(node+1,total_nodes):
-        if ([node, idx] not in np.array(G.edges).tolist()) and (remaining_ports_per_switch_full_list[idx] > 0):
-            return True
-    return False
+class NXTopology:
+    '''
+    NXTopology stores all information of our random topology
+    '''
 
-# class NXTopology:
-#     '''
-#     NXTopology stores all information of our random topology
-#     '''
-#     def __init__(self, number_of_servers=686, switch_graph_degree=14,  number_of_racks=40, number_of_links=None):
-#         self.number_of_servers = number_of_servers
-#         self.switch_graph_degree = switch_graph_degree  # k
-#         if number_of_links is not None:
-#             self.number_of_racks = (2 * number_of_links) // self.switch_graph_degree
-#         else:
-#             self.number_of_racks = number_of_racks
+    def __init__(self, number_of_servers=686, switch_graph_degree=14,  number_of_racks=40, number_of_links=None):
+        self.number_of_servers = number_of_servers
+        self.switch_graph_degree = switch_graph_degree  # k
+        if number_of_links is not None:
+            self.number_of_racks = (
+                2 * number_of_links) // self.switch_graph_degree
+        else:
+            self.number_of_racks = number_of_racks
 
-#         self.number_of_servers_in_rack = int(np.ceil(float(self.number_of_servers) / self.number_of_racks))
-#         self.number_of_switch_ports = self.number_of_servers_in_rack + self.switch_graph_degree  # r
+        self.number_of_servers_in_rack = int(
+            np.ceil(float(self.number_of_servers) / self.number_of_racks))
+        self.number_of_switch_ports = self.number_of_servers_in_rack + \
+            self.switch_graph_degree  # r
 
-#         self.G = nx.random_regular_graph(self.switch_graph_degree, self.number_of_racks)
-#         # sender_to_receiver[i] = j <=> i sends message to j
-#         self.sender_to_receiver = random_derangement(self.number_of_servers)
+        self.G = nx.random_regular_graph(
+            self.switch_graph_degree, self.number_of_racks)
 
-#         print("number_of_servers_in_rack = " +
-#               str(self.number_of_servers_in_rack))
-#         print("number_of_switch_ports = " + str(self.number_of_switch_ports))
-#         print("RRG has " + str(self.number_of_racks) + " nodes with degree " +
-#               str(self.switch_graph_degree) + " and " + str(self.G.number_of_edges()) + " edges")
+        print("number_of_servers_in_rack = " +
+              str(self.number_of_servers_in_rack))
+        print("number_of_switch_ports = " + str(self.number_of_switch_ports))
+        print("RRG has " + str(self.number_of_racks) + " nodes with degree " +
+              str(self.switch_graph_degree) + " and " + str(self.G.number_of_edges()) + " edges")
 
-    
-#     def get_rack_index(self, server_index):
-#         '''
-#         given server index, returns the ToR switch index it is connected to
-#         '''
-#         return server_index % self.number_of_racks
+    def RandomPermutation(self, size):
+        screw = 1
+        ls = []
 
-    
-#     def average_shortest_path_length(self):
-#         '''
-#         To get ASPL of RRG
-#         '''
-#         s = 0
-#         c = 0
-#         for i in range(self.number_of_racks):
-#             for j in range(i+1, self.number_of_racks):
-#                 s += len(nx.shortest_path(self.G, i, j))-1
-#                 c += 1
-#         return float(s)/c
+        while screw == 1:
+            screw = 0
+            ls = []
+            for i in range(size):
+                ls.append(i)
+            for i in range(size):
+                ok = 0
+                k = 0
+                cnt = 0
+                while ok == 0:
+                    # choose a shift in [0, size-1-i]
+                    k = random.randint(0, size-i-1)
+                    # check if we should swap i and i+k
+                    if self.get_rack_index(i) != self.get_rack_index(ls[i+k]):
+                        ok = 1
+                    cnt += 1
+                    if cnt > 50:
+                        screw = 1
+                        ok = 1
 
-#     def get_max_min_throughput(self):
-#         '''
-#         Getting the max-min throughput using a linear program
-#         '''
-#         n = self.number_of_racks
-#         f = self.number_of_servers
-#         r = self.switch_graph_degree
-#         D = np.zeros(shape=(n, n))
+                # swap i's value and i+k's value
+                buf = ls[i]
+                ls[i] = ls[i+k]
+                ls[i+k] = buf
+        return ls
 
-#         for i in range(len(self.sender_to_receiver)):
-#             sender_switch = self.get_rack_index(i)
-#             receiver_switch = self.get_rack_index(self.sender_to_receiver[i])
-#             # print(sender_switch, receiver_switch)
-#             if sender_switch != receiver_switch:
-#                 D[sender_switch, receiver_switch] += 1
+    def get_rack_index(self, server_index):
+        '''
+        given server index, returns the ToR switch index it is connected to
+        '''
+        return server_index % self.number_of_racks
 
-#         np.set_printoptions(threshold=np.nan)
-#         #D = np.eye(n)[t.random_derangement(n)]
-#         #print('D = '+str(D))
+    def average_shortest_path_length(self):
+        '''
+        To get ASPL of RRG
+        '''
+        s = 0
+        c = 0
+        for i in range(self.number_of_racks):
+            for j in range(i+1, self.number_of_racks):
+                s += len(nx.shortest_path(self.G, i, j))-1
+                c += 1
+        return float(s)/c
 
-#         C = np.zeros(shape=(n ** 3 + 1))
-#         C[-1] = -1
-#         A_eq = cvx.spmatrix([], [], [], size=(n ** 2, n ** 3+1))
-#         b_eq = np.zeros(shape=(n ** 2,))
+    def get_max_min_throughput(self, traffic_type):
+        '''
+        Getting the max-min throughput using a linear program
+        '''
+        n = self.number_of_racks
+        r = self.switch_graph_degree
 
-#         for i in range(n):
-#             for l in range(n):
-#                 idx = i * n + l
-#                 for k in self.G.neighbors(l):
-#                     A_eq[idx, to_vector_index(n, i, l, k)] = 1
-#                     A_eq[idx, to_vector_index(n, i, k, l)] = -1
-#                 # coefficent of Z:
-#                 if l == i:
-#                     A_eq[idx, -1] = -np.sum(D[i, :])
-#                 else:
-#                     A_eq[idx, -1] = D[i, l]
+        # sender_to_receiver[i, j] = 1 <=> i sends message to j
+        if traffic_type == TrafficType.PERMUTATION:
+            self.sender_to_receiver = self.RandomPermutation(
+                self.number_of_servers)
+            self.sender_to_receiver = np.eye(self.number_of_servers)[
+                self.sender_to_receiver]
+        elif traffic_type == TrafficType.ALL_TO_ALL:
+            self.sender_to_receiver = np.ones(shape=(
+                self.number_of_servers, self.number_of_servers))-np.eye(self.number_of_servers)
 
-#         A_up = cvx.spmatrix([], [], [], size=(
-#             len(self.G.edges)+n**3+2, n ** 3 + 1))
-#         b_up = np.ones(shape=(len(self.G.edges)+n**3+2))  # link capacities
-#         idx = 0
-#         for (l, k) in self.G.edges:
-#             for i in range(n):
-#                 A_up[idx, to_vector_index(n, i, l, k)] = 0.5
-#                 A_up[idx, to_vector_index(n, i, k, l)] = 0.5
-#             idx += 1
+        D = np.zeros(shape=(n, n))
+        for i in range(self.sender_to_receiver.shape[0]):
+            for j in range(self.sender_to_receiver.shape[1]):
+                if self.sender_to_receiver[i][j] == 0:
+                    continue
+                sender_switch = self.get_rack_index(i)
+                receiver_switch = self.get_rack_index(j)
+                #receiver_switch = self.get_rack_index(self.sender_to_receiver[i])
+                # print(sender_switch, receiver_switch)
+                if sender_switch != receiver_switch:
+                    #print(sender_switch, receiver_switch)
+                    D[sender_switch, receiver_switch] += 1
+                else:
+                    print('switches from the same rack are sending data')
 
-#         C = cvx.matrix(C)
+        # np.set_printoptions(threshold=np.nan)
+        # D = np.eye(n)[random_derangement(n)]*self.number_of_servers_in_rack
+        # print(self.sender_to_receiver)
+        # print('D = '+str(D))
 
-#         for i in range(n ** 3 + 1):
-#             A_up[idx+i, i] = -1
-#         A_up[len(self.G.edges)+n**3+1, n ** 3] = 1
+        # We now convert the linear programming problem to the following form:
+        # Minimize:     c^T * x
+        # Subject to:   A_up * x <= b_up
+        #               A_eq * x == b_eq
 
-#         b_up[idx:idx + n ** 3 + 1] = np.zeros(shape=(n**3+1))
-#         b_up[-1] = 1
+        # ignore f_i,l,k and only minimize -Z (i.e. maximize Z):
+        C = np.zeros(shape=(n**3 + 1))
+        C[-1] = -1
+        C = cvx.matrix(C)
 
-#         #print("C = "+str(C))
-#         #print("A_eq = "+str(A_eq))
-#         #print("b_eq = "+str(b_eq))
-#         #print("A_up = "+str(A_up))
-#         #print("b_up = " + str(b_up))
+        A_eq = cvx.spmatrix([], [], [], size=(n**2+1, n**3 + 1))
+        b_eq = cvx.spmatrix([], [], [], size=(n**2+1, 1))
 
-#         b_up = cvx.matrix(b_up)
-#         b_eq = cvx.matrix(b_eq)
+        idx = 0
+        for i in range(n):
+            for l in range(n):
 
-#         sol = cvx.solvers.lp(C, A_up, b_up, A_eq, b_eq, solver='glpk')
-#         # print(sol['x'])
-#         print('Z = ' + str(sol['x'][-1]))
-#         upper_bound = n * r / (f * d_star(n, r))
-#         print("Upper bound = " + str(upper_bound))
-#         ratio = sol['x'][-1]/upper_bound
-#         print('ratio = ' + str(ratio))
-#         return ratio
+                for k in self.G.neighbors(l):
+                    A_eq[idx, to_vector_index(n, i, l, k)] = 1
+                    A_eq[idx, to_vector_index(n, i, k, l)] = -1
+                # coefficent of Z:
+                if l == i:
+                    A_eq[idx, -1] = -np.sum(D[i, :])
+                else:
+                    A_eq[idx, -1] = D[i, l]
+                #print(A_eq[idx, -1])
+                idx += 1
+
+        for l in range(n):
+            for k in range(n):
+                if(l, k) not in self.G.edges():
+                    for i in range(n):
+                        A_eq[idx, to_vector_index(n, i, l, k)] = 1
+                        A_eq[idx, to_vector_index(n, i, k, l)] = 1
+
+        A_up = cvx.spmatrix([], [], [], size=(
+            len(self.G.edges())*2 + n**3 + 1, n**3 + 1))
+        b_up = cvx.spmatrix([], [], [], size=(
+            len(self.G.edges())*2 + n**3 + 1, 1))
+        idx = 0
+
+        for l in range(n):
+            for k in range(n):
+                if(l, k) not in self.G.edges():
+                    continue
+                for i in range(n):
+                    A_up[idx, to_vector_index(n, i, l, k)] = 1
+                    # A_up[idx, to_vector_index(n, i, k, l)] = 0.5
+                    b_up[idx] = 1  # C(e)
+
+                idx += 1
+
+        for i in range(n**3 + 1):
+            A_up[idx, i] = -1
+            idx += 1
+        #A_up[len(self.G.edges) + n**3 + 1, n**3] = 1
+
+        #b_up[idx:idx + n**3 + 1] = np.zeros(shape=(n**3 + 1))
+        #b_up[-1] = 2
+
+        #print("C = "+str(C))
+        #print("A_eq = "+str(A_eq))
+        #print("b_eq = "+str(b_eq))
+        #print("A_up = "+str(A_up))
+        #print("b_up = " + str(b_up))
+
+        b_up = cvx.matrix(b_up)
+        b_eq = cvx.matrix(b_eq)
+
+        sol = cvx.solvers.lp(C, A_up, b_up, A_eq, b_eq, solver='glpk')
+        '''
+        # calculate and print flow of each edge
+        for (l, k) in self.G.edges():
+            for i in range(n):
+                if np.abs(sol['x'][to_vector_index(n, i, l, k)]) > 1e-8:
+                    print('flow {} from {} to {} is {}'.format(
+                        i, l, k, sol['x'][to_vector_index(n, i, l, k)]))
+                if np.abs(sol['x'][to_vector_index(n, i, k, l)]) > 1e-8:
+                    print('flow {} from {} to {} is {}'.format(
+                        i, k, l, sol['x'][to_vector_index(n, i, k, l)]))
+        '''
+        return sol['x'][-1]
 
 
 class NXTopology_het:
