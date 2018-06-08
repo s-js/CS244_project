@@ -8,7 +8,7 @@ import cvxopt as cvx
 import random
 from scipy.optimize import linprog
 from enum import Enum
-
+import psutil
 
 class TrafficType(Enum):
     ALL_TO_ALL = 0
@@ -286,7 +286,7 @@ class NXTopology_het:
     NXTopology_het stores all information of our random heteregenous topology
     '''
 
-    def __init__(self, number_of_servers=400, number_of_switch_types=2, number_of_switches=[20,20],
+    def __init__(self, number_of_servers=480, number_of_switch_types=2, number_of_switches=[40,20],
             number_of_ports_per_switch=[20,30],ratio_of_servers_in_largest_switch_to_expected=1.0, cross_cluster_bias=1.0):
         
         self.number_of_switch_types = number_of_switch_types
@@ -380,7 +380,7 @@ class NXTopology_het:
         '''
 
         # getting ratio of intra to total remaining ports per small switch, with link bias
-        total_remaining_ports_per_switch_type = [ np.sum(remaining_ports_per_switch_full_list[:self.number_of_switches[1]]),np.sum( remaining_ports_per_switch_full_lists[self.number_of_switches[0]:self.number_of_switches[0]+self.number_of_switches[1]])]
+        total_remaining_ports_per_switch_type = [ np.sum(remaining_ports_per_switch_full_list[:self.number_of_switches[1]]),np.sum( remaining_ports_per_switch_full_list[self.number_of_switches[0]:self.number_of_switches[0]+self.number_of_switches[1]])]
         x = (total_remaining_ports_per_switch_type[0]
              * (total_remaining_ports_per_switch_type[0]-1))/2.0
         y = total_remaining_ports_per_switch_type[0] * \
@@ -530,7 +530,9 @@ class NXTopology_het:
         '''
         Getting the max-min throughput using a linear program
         '''
-        n = np.sum(self.number_of_switches)
+        
+        #print(1,psutil.virtual_memory())
+        n = int(np.sum(self.number_of_switches))
         #r = self.switch_graph_degree
 
         # sender_to_receiver[i, j] = 1 <=> i sends message to j
@@ -577,10 +579,14 @@ class NXTopology_het:
         b_eq = cvx.spmatrix([], [], [], size=(n**2+1, 1))
 
         idx = 0
+        
+        #print(2,psutil.virtual_memory())
+        test=[]
         for i in range(n):
             for l in range(n):
-
                 for k in self.G.neighbors(l):
+                    #print(3,psutil.virtual_memory())
+                    #test+=[1.323]
                     A_eq[idx, to_vector_index(n, i, l, k)] = 1
                     A_eq[idx, to_vector_index(n, i, k, l)] = -1
                 # coefficent of Z:
