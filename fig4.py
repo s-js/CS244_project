@@ -16,6 +16,7 @@ for r in np.array(x_axis)/5:
 upper_bound = n * r / (f * d_star(n, r))
 '''
 
-t = NXTopology_het(cross_cluster_bias=1.1)
-print(t.remaining_ports_per_switch_full_list)
-print("done")
+t = NXTopology_het()
+res=t.get_max_min_throughput()
+print("result={}".format(res))
+
