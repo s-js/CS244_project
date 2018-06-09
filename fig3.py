@@ -5,7 +5,7 @@ import numpy as np
 from graph import NXTopology, theoretical_upper_bound, TrafficType, d_star
 
 if __name__ == "__main__":
-    x_axis = list(range(5, 20, 2))
+    x_axis = list(range(5, 1800, 2))
     ys = []
     fig, ax1 = plt.subplots()
     ax1.set_xlabel('Network Size (log scale)')

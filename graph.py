@@ -155,7 +155,7 @@ class NXTopology:
         c = 0
         for i in range(self.number_of_racks):
             for j in range(i+1, self.number_of_racks):
-                s += len(nx.shortest_path(self.G, i, j))-1
+                s += nx.shortest_path_length(self.G, i, j)
                 c += 1
         return float(s)/c
 
