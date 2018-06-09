@@ -8,7 +8,6 @@ import cvxopt as cvx
 import random
 from scipy.optimize import linprog
 from enum import Enum
-import psutil
 
 class TrafficType(Enum):
     ALL_TO_ALL = 0
