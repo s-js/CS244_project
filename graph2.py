@@ -66,6 +66,12 @@ def check_if_edge_possible(G, node, total_nodes, remaining_ports_per_switch_full
             return True
     return False
 
+def check_if_edge_possible2(G, node, nodes_start,nodes_end, remaining_ports_per_switch_full_list):
+    for idx in range(nodes_start, nodes_end):
+        if ((node, idx) not in list(G.edges)) and (remaining_ports_per_switch_full_list[idx] > 0):
+            return True
+    return False
+
 
 def random_derangement(n):
     '''
@@ -371,7 +377,7 @@ class NXTopology_het:
                 remaining_ports_per_switch_full_list[switch_rcv] -= 1
         self.remaining_ports_per_switch_full_list=remaining_ports_per_switch_full_list	
     
-    
+
     def generate_graph_with_cross_bias(self, remaining_ports_per_switch_full_list):
         # !!! Only works for two types of switches for now !!! #
         ## Dealing with biases in cross-cluster links
@@ -381,33 +387,32 @@ class NXTopology_het:
 
         # getting ratio of intra to total remaining ports per small switch, with link bias
         total_remaining_ports_per_switch_type = [ np.sum(remaining_ports_per_switch_full_list[:self.number_of_switches[0]]),np.sum( remaining_ports_per_switch_full_list[self.number_of_switches[0]:self.number_of_switches[0]+self.number_of_switches[1]])]
-        x = (total_remaining_ports_per_switch_type[0]
-             * (total_remaining_ports_per_switch_type[0]-1))/2.0
-        y = total_remaining_ports_per_switch_type[0] * \
-            total_remaining_ports_per_switch_type[1]
-        z = (total_remaining_ports_per_switch_type[1]
-             * (total_remaining_ports_per_switch_type[1]-1))/2.0
-        bias_in_cross_links=(self.cross_cluster_bias-1)*y
+        x = np.power((total_remaining_ports_per_switch_type[0]
+             * (total_remaining_ports_per_switch_type[0]-1))/2.0,1)
+        y = np.power(total_remaining_ports_per_switch_type[0] * total_remaining_ports_per_switch_type[1],1)
+        z = np.power((total_remaining_ports_per_switch_type[1]
+             * (total_remaining_ports_per_switch_type[1]-1))/2.0,1)
+        bias_in_cross_links = np.sign((self.cross_cluster_bias-1))*np.power(np.abs(self.cross_cluster_bias-1)*y, 1)
         y = y + bias_in_cross_links
         x = x - x/(x+z)*bias_in_cross_links
         z = z - z/(x+z)*bias_in_cross_links
         assert(x>0 and y>0 and z>0),"cross-cluster link bias too extreme"
-        ratio_of_intra=x/(x+y)
-        y_max=int((np.sum(total_remaining_ports_per_switch_type)-5)/2*y/(x+y+z))
+        #ratio_of_intra=x/(x+y)
+        y_max=int((np.sum(total_remaining_ports_per_switch_type)-15)/2*x/(x+y+z))  ##################################################################### design choice
 
         # getting upper bound on intra and cross edges per small switch, use y_max to stop when we populate that amount of intra links in small switch
 
-        #cross_edges_per_small_switch = remaining_ports_per_switch[0] - intra_edges_per_small_switch
-        initial_remaining_edges_per_small_switch =remaining_ports_per_switch_full_list[:self.number_of_switches[0]].astype(int)
-        intra_edges_per_small_switch = np.ceil(initial_remaining_edges_per_small_switch*ratio_of_intra)
-        print("Intra-edges per small switch={}".format(intra_edges_per_small_switch))
+        #cross_edges_per_small_switch = remaining_ports_per_switch[0] - intra_edges`_per_small_switch
+        #initial_remaining_edges_per_small_switch =remaining_ports_per_switch_full_list[:self.number_of_switches[0]].astype(int)
+        #intra_edges_per_small_switch = np.ceil(initial_remaining_edges_per_small_switch*ratio_of_intra).astype(int)
+        #print("Intra-edges per small switch={}".format(intra_edges_per_small_switch))
 
         '''remaining_ports_per_switch_full_list = [int(remaining_ports_per_switch[0])] * self.number_of_switches[0]\
             + [int(remaining_ports_per_switch[1])]*self.number_of_switches[1]
         '''
         #used to signal we reached maximum expected intra links in small switch cluster
         reached_limit_intra_small=False
-        current_intra_small=0
+        current_intra_small=0 #?
         
         #Populating the graph with the links, with bias
 
@@ -416,12 +421,12 @@ class NXTopology_het:
             edges_list=[]
 
             #for each switch, start with intra-cluster links
-            while ( (initial_remaining_edges_per_small_switch[switch]-remaining_ports_per_switch_full_list[switch] < intra_edges_per_small_switch[switch]) and 
-            (switch != self.number_of_switches[0]-1) and 
-            (reached_limit_intra_small==False) ):
+            #(initial_remaining_edges_per_small_switch[switch]-remaining_ports_per_switch_full_list[switch] < intra_edges_per_small_switch[switch]
+            while remaining_ports_per_switch_full_list[switch]>0 and (switch != self.number_of_switches[0]-1) and (reached_limit_intra_small == False):
                 edge = [switch]
                 switch_rcv=random.randint(switch+1,self.number_of_switches[0]-1)
-                while (edge+[switch_rcv] in edges_list) or (initial_remaining_edges_per_small_switch[switch_rcv]-remaining_ports_per_switch_full_list[switch_rcv] >= intra_edges_per_small_switch[switch_rcv]):
+                #while (edge+[switch_rcv] in edges_list) or (initial_remaining_edges_per_small_switch[switch_rcv]-remaining_ports_per_switch_full_list[switch_rcv] >= intra_edges_per_small_switch[switch_rcv]):
+                while (edge+[switch_rcv] in edges_list) or (remaining_ports_per_switch_full_list[switch_rcv] <= 0):
                     switch_rcv = random.randint(
                         switch+1, self.number_of_switches[0]-1)
                 edge=edge+[switch_rcv]
@@ -429,14 +434,13 @@ class NXTopology_het:
                 remaining_ports_per_switch_full_list[switch] -= 1
                 remaining_ports_per_switch_full_list[switch_rcv] -= 1
                 current_intra_small+=1
-                
-                # TODO
+
                 if current_intra_small >= y_max:  
                     reached_limit_intra_small=True
                 
 
             #then, for each switch, add the cross-cluster links
-            while (remaining_ports_per_switch_full_list[switch] > 0):
+            while (remaining_ports_per_switch_full_list[switch] > 0) and check_if_edge_possible2(self.G, switch, self.number_of_switches[0], np.sum(self.number_of_switches), remaining_ports_per_switch_full_list):
                 edge = [switch]
                 switch_rcv = random.randint(
                     self.number_of_switches[0], self.number_of_switches[0]+self.number_of_switches[1]-1)
@@ -467,7 +471,6 @@ class NXTopology_het:
                 remaining_ports_per_switch_full_list[switch_big] -= 1
                 remaining_ports_per_switch_full_list[switch_rcv] -= 1
         self.remaining_ports_per_switch_full_list=remaining_ports_per_switch_full_list	
-
 
     def RandomPermutation(self, size):
         screw = 1
@@ -651,3 +654,4 @@ class NXTopology_het:
                         i, k, l, sol['x'][to_vector_index(n, i, k, l)]))
         '''
         return sol['x'][-1]
+
